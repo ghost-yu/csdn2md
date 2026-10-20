@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         csdn2md - 批量下载CSDN文章为Markdown
 // @namespace    http://tampermonkey.net/
-// @version      3.5.0
+// @version      3.5.1
 // @description  下载CSDN文章为Markdown格式，支持专栏批量下载。CSDN排版经过精心调教，最大程度支持CSDN的全部Markdown语法：KaTeX内联公式、KaTeX公式块、图片、内联代码、代码块、Bilibili视频控件、有序/无序/任务/自定义列表、目录、注脚、加粗斜体删除线下滑线高亮、内容居左/中/右、引用块、链接、快捷键（kbd）、表格、上下标、甘特图、UML图、FlowChart流程图
 // @author       ShizuriYuki
 // @match        https://*.csdn.net/*
@@ -2601,8 +2601,9 @@
                 throw new Error("[saveWebImageToLocal] Invalid argument: imgUrl must be a string.");
             }
 
-            // 清理URL
-            imgUrl = Utils.clearUrl(imgUrl);
+            // 图片查询参数可能包含签名、格式或资源标识，不能按文章链接清理。
+            // 只移除用于排版的锚点。
+            imgUrl = imgUrl.split("#")[0];
 
             const imgOwner = imgPrefix + assetDirName;
 
@@ -2620,7 +2621,8 @@
             // 记录图片数量
             this.imageCount[imgOwner]++;
             const index = this.imageCount[imgOwner];
-            let ext = imgUrl.split(".").pop();
+            const imagePath = new URL(imgUrl).pathname;
+            let ext = imagePath.match(/\.([a-z0-9]+)(?:!.*)?$/i)?.[1].toLowerCase() || "";
             const allowedExt = ["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico", "avif"];
             if (!allowedExt.includes(ext)) {
                 console.warn(`[saveWebImageToLocal] Unsupported image format: ${ext}`);
@@ -3614,9 +3616,9 @@
                     return "";
                 }
                 if (style.includes("text-align:center")) {
-                    return `<div style="text-align:center;">${Utils.shrinkHtml(node.innerHTML)}</div>\n\n`;
+                    return `<div style="text-align:center;">\n\n${text}\n\n</div>\n\n`;
                 } else if (style.includes("text-align:right")) {
-                    return `<div style="text-align:right;">${Utils.shrinkHtml(node.innerHTML)}</div>\n\n`;
+                    return `<div style="text-align:right;">\n\n${text}\n\n</div>\n\n`;
                 }
             }
 
@@ -3725,17 +3727,42 @@
          * 处理图片元素
          */
         async handleImage(node, context) {
-            let src = node.getAttribute("src") || "";
+            let src = node.getAttribute("data-src") || node.getAttribute("data-original") || node.getAttribute("src") || "";
             const alt = node.getAttribute("alt") || "";
             const cls = node.getAttribute("class") || "";
             const width = node.getAttribute("width") || "";
             const height = node.getAttribute("height") || "";
             let result = "";
 
-            // 处理数学代码图片
-            if (cls.includes("mathcode")) {
-                return `${this.SEPARATION_BEAUTIFICATION}\$\$\n${alt}\n\$\$`;
+            // 富文本编辑器的公式不一定带 mathcode，需同时识别公式服务 URL。
+            const equationMatch = src.match(/^(?:https?:)?\/\/latex\.csdn\.net\/eq\?([^#]*)/i);
+            let latex = alt.trim();
+            if (equationMatch && !latex) {
+                try {
+                    // eq 后面是原始 TeX 查询串，不能用 URLSearchParams（会把 + 变成空格）。
+                    latex = decodeURIComponent(equationMatch[1]);
+                } catch (error) {
+                    console.warn("无法解码公式 URL，保留原图片：", src);
+                }
+            }
+            // 有些文章含有空的公式占位图，不应下载没有内容的 /eq 接口。
+            if (equationMatch && !equationMatch[1] && !latex) return "";
+            if ((cls.split(/\s+/).includes("mathcode") || equationMatch) && latex) {
+                const parent = node.parentElement;
+                const isDisplay = !context.isInTableCell && parent &&
+                    /^(P|DIV|CENTER)$/.test(parent.tagName) &&
+                    Array.from(parent.childNodes).every((child) =>
+                        child === node ||
+                        (child.nodeType === this.TEXT_NODE && !child.textContent.trim()) ||
+                        (child.nodeType === this.ELEMENT_NODE && child.tagName === "BR")
+                    );
+                if (isDisplay) {
+                    return `${this.CONSTANT_DOUBLE_NEW_LINE}$$\n${latex}\n$$${this.CONSTANT_DOUBLE_NEW_LINE}`;
+                }
+                return `${this.SEPARATION_BEAUTIFICATION}$${latex.replace(/\r?\n/g, " ")}$${this.SEPARATION_BEAUTIFICATION}`;
             } else {
+                if (!src) return "";
+                src = new URL(src, context.articleUrl || node.baseURI).href;
                 // 根据图片是否居中添加空格
                 if (src.includes("#pic_center") || context.forceImageCentering) {
                     result = this.CONSTANT_DOUBLE_NEW_LINE;

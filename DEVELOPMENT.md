@@ -38,6 +38,21 @@ grep -n "@version" csdn2md.user.js
 // @version      3.4.3
 ```
 
+## 图片与公式回归检查
+
+```bash
+node --test tests/images.test.cjs
+python -m unittest discover -s tests -p "test_*.py"
+```
+
+旧版导出 ZIP 如果把公式保存成缺失的 `assets/序号_序号` 资源，可使用以下命令修复（支持 Markdown 图片及 HTML 图片标签）：
+
+```bash
+python scripts/repair_formula_images.py "文章.zip" --output-dir "修复结果"
+```
+
+工具会保留原 ZIP，在输出目录生成 `_已修复.zip` 和 `repair-report.json`。它只修复资源不存在、路径符合上述格式且有公式替代文本的引用，保留其他资源，并校验压缩包完整性与本地图片引用。输出文件已存在时会停止，避免覆盖已有结果。
+
 ## 发布 Release
 
 以下以 `3.4.3` 为例。发布新版本时，把命令里的版本号替换成目标版本。
