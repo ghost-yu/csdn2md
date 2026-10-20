@@ -92,6 +92,7 @@ test('malformed formula URL falls back to the original image', async () => {
 test('aligned paragraphs retain converted math and local image references', async () => {
     const converter = new MarkdownConverter({});
     converter.processChildren = async () => '$x+y$ ![](./assets/1.png)';
+    converter.addPicCenterToImages = () => {};
     for (const alignment of ['center', 'right']) {
         const node = {
             getAttribute: (name) => name === 'style' ? `text-align:${alignment}` : null,
@@ -100,7 +101,39 @@ test('aligned paragraphs retain converted math and local image references', asyn
         const markdown = await converter.handleParagraph(node, {});
         assert(markdown.includes('$x+y$ ![](./assets/1.png)'));
         assert(!markdown.includes('latex.csdn.net'));
+        assert(!/<\/?div\b/i.test(markdown));
     }
+});
+
+test('table cells collapse paragraph and explicit breaks without losing text or pipes', async () => {
+    const converter = new MarkdownConverter({});
+    converter.processChildren = async () => '\n<br>\n**Title**\n\n<br/>\nDetail | value\n<br/><br/>\n';
+    const context = { isInTableCell: true };
+    const markdown = await converter.handleTableCell({}, context);
+    assert.equal(markdown, '**Title**<br/>Detail \\| value');
+    assert.equal(context.isInTableCell, true);
+});
+
+test('table cells retain a single necessary break and no empty boundary breaks', async () => {
+    const converter = new MarkdownConverter({});
+    for (const content of ['first\n\nsecond', 'first<br />second', 'first<br/>\n\nsecond']) {
+        converter.processChildren = async () => content;
+        assert.equal(await converter.handleTableCell({}, {}), 'first<br/>second');
+    }
+    converter.processChildren = async () => '<br/>\n<br/>\n';
+    assert.equal(await converter.handleTableCell({}, {}), ' ');
+});
+
+test('table cleanup retains formula separation and cloned cell context', async () => {
+    const converter = new MarkdownConverter({});
+    const context = { isInTableCell: false };
+    converter.processChildren = async (node, childContext) => {
+        assert.equal(childContext.isInTableCell, true);
+        assert.notEqual(childContext, context);
+        return `1) first${converter.CONSTANT_DOUBLE_NEW_LINE}${converter.SEPARATION_BEAUTIFICATION}2) second`;
+    };
+    assert.equal(await converter.handleTableCell({}, context), '1) first<br/>2) second');
+    assert.equal(context.isInTableCell, false);
 });
 
 test('asset downloading preserves query strings, extracts extensions and deduplicates', async () => {

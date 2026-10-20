@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         csdn2md - 批量下载CSDN文章为Markdown
 // @namespace    http://tampermonkey.net/
-// @version      3.5.1
+// @version      3.5.2
 // @description  下载CSDN文章为Markdown格式，支持专栏批量下载。CSDN排版经过精心调教，最大程度支持CSDN的全部Markdown语法：KaTeX内联公式、KaTeX公式块、图片、内联代码、代码块、Bilibili视频控件、有序/无序/任务/自定义列表、目录、注脚、加粗斜体删除线下滑线高亮、内容居左/中/右、引用块、链接、快捷键（kbd）、表格、上下标、甘特图、UML图、FlowChart流程图
 // @author       ShizuriYuki
 // @match        https://*.csdn.net/*
@@ -3594,7 +3594,7 @@
             const cls = node.getAttribute("class");
             const style = node.getAttribute("style");
 
-            if (cls && cls.includes("img-center")) {
+            if ((cls && cls.includes("img-center")) || /text-align\s*:\s*center/i.test(style || "")) {
                 // 处理图片居中，类似 <center> 标签
                 this.addPicCenterToImages(node);
                 return (await this.processChildren(node, context)) + this.CONSTANT_DOUBLE_NEW_LINE;
@@ -3615,11 +3615,7 @@
                 if (style.includes("padding-left")) {
                     return "";
                 }
-                if (style.includes("text-align:center")) {
-                    return `<div style="text-align:center;">\n\n${text}\n\n</div>\n\n`;
-                } else if (style.includes("text-align:right")) {
-                    return `<div style="text-align:right;">\n\n${text}\n\n</div>\n\n`;
-                }
+                // 对齐样式不再包裹 HTML div，避免 Markdown 图片/公式与闭合标签混排。
             }
 
             return `${text}\n\n`;
@@ -4040,9 +4036,7 @@
          */
         async handleTableCell(node, context) {
             // 递归处理子节点
-            context.isInTableCell = true; // 标记当前在表格单元格内，供后续处理使用
-            let content = await this.processChildren(node, context);
-            context.isInTableCell = false;
+            let content = await this.processChildren(node, { ...context, isInTableCell: true });
 
             // 去除首尾空白
             content = this.specialTrim(content);
@@ -4060,6 +4054,13 @@
 
             // 统一 <br> 形式
             content = Utils.normalizeBrToSelfClosing(content);
+
+            // 多个段落/空段落及显式 br 会叠加；表格只保留内容之间的一次换行。
+            content = content
+                .replace(/(?:\s*<br\/>\s*){2,}/gi, "<br/>")
+                .replace(/^(?:\s*<br\/>\s*)+|(?:\s*<br\/>\s*)+$/gi, "")
+                .replace(/\s*<br\/>\s*/gi, "<br/>")
+                .trim();
 
             // 转义 Markdown 表格的分隔符 |
             content = content.replace(/\|/g, "\\|");
