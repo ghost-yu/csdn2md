@@ -105,22 +105,20 @@ test('aligned paragraphs retain converted math and local image references', asyn
     }
 });
 
-test('table cells collapse paragraph and explicit breaks without losing text or pipes', async () => {
+test('table cells join paragraphs without generating br tags or losing pipes', async () => {
     const converter = new MarkdownConverter({});
-    converter.processChildren = async () => '\n<br>\n**Title**\n\n<br/>\nDetail | value\n<br/><br/>\n';
+    converter.processChildren = async () => '\n**Title**\n\nDetail | value\n\n';
     const context = { isInTableCell: true };
     const markdown = await converter.handleTableCell({}, context);
-    assert.equal(markdown, '**Title**<br/>Detail \\| value');
+    assert.equal(markdown, '**Title** Detail \\| value');
     assert.equal(context.isInTableCell, true);
 });
 
-test('table cells retain a single necessary break and no empty boundary breaks', async () => {
+test('explicit br nodes become spaces only inside tables', async () => {
     const converter = new MarkdownConverter({});
-    for (const content of ['first\n\nsecond', 'first<br />second', 'first<br/>\n\nsecond']) {
-        converter.processChildren = async () => content;
-        assert.equal(await converter.handleTableCell({}, {}), 'first<br/>second');
-    }
-    converter.processChildren = async () => '<br/>\n<br/>\n';
+    assert.equal(await converter.handleLineBreak({}, { isInTableCell: true }), ' ');
+    assert.equal(await converter.handleLineBreak({}, {}), '\n');
+    converter.processChildren = async () => '\n\n  \n';
     assert.equal(await converter.handleTableCell({}, {}), ' ');
 });
 
@@ -132,8 +130,22 @@ test('table cleanup retains formula separation and cloned cell context', async (
         assert.notEqual(childContext, context);
         return `1) first${converter.CONSTANT_DOUBLE_NEW_LINE}${converter.SEPARATION_BEAUTIFICATION}2) second`;
     };
-    assert.equal(await converter.handleTableCell({}, context), '1) first<br/>2) second');
+    assert.equal(await converter.handleTableCell({}, context), '1) first 2) second');
     assert.equal(context.isInTableCell, false);
+});
+
+test('table cells preserve br text inside code examples', async () => {
+    const converter = new MarkdownConverter({});
+    converter.processChildren = async () => converter.handleCode({ textContent: '<br/>' }, {});
+    assert.equal(await converter.handleTableCell({}, {}), '`<br/>`');
+});
+
+test('legacy center elements inside tables do not generate br or center wrappers', async () => {
+    const converter = new MarkdownConverter({});
+    converter.processChildren = async () => 'first\nsecond';
+    const center = await converter.handleCenter({}, { isInTableCell: true });
+    converter.processChildren = async () => center;
+    assert.equal(await converter.handleTableCell({}, {}), 'first second');
 });
 
 test('asset downloading preserves query strings, extracts extensions and deduplicates', async () => {
